@@ -31,8 +31,8 @@ from t1_checks import check_strong_t1, check_ME1, check_ME2
 # Define E, r and chi(B), with B passed as a frozenset.
 strong = check_strong_t1(E, r, chi)
 assert strong['is_strong'], strong
-me1 = check_ME1(E, r, chi, disjoint_only=True)
-me2 = check_ME2(E, r, chi, disjoint_only=True)
+me1 = check_ME1(E, r, chi)
+me2 = check_ME2(E, r, chi)
 print(me1['holds'], me2['holds'])
 ```
 
@@ -45,25 +45,20 @@ strings such as `'1/3'`. Floating-point and symbolic irrational coordinates are
 not supported. Zero coordinates are allowed; complete mappings must explicitly
 include them. The functions use only the Python standard library.
 
-### Important exchange-domain convention
+### Exchange domain
 
-The supplied paper allows `I1` to be any subset of `B1`, while `I2` is chosen
-from `B2 - B1`. If `I1` meets `B2`, an exchanged alternating coordinate has a
-repetition. The functions' **default** preserves that stated domain, interpreting
-such coordinates as zero, the empty hypersum as `{0}`, and `max(empty)` as zero
-in the ordered set of nonnegative reals. Under these conventions ME1 has trivial
-failures whenever the rank is positive and a basis exists.
-
-`disjoint_only=True` instead imposes `I1 ⊆ B1 - B2`, a suggested correction
-that removes this issue. Both interpretations are checked in the notebook.
-The paper's two witnesses use disjoint bases, so both remain valid under either
-interpretation. The second witness is correctly labeled **ME2**, not ME1.
+Both ME checkers always use `I1 ⊆ B1 - B2`, as in the corrected paper, and
+`I2 ⊆ B2 - B1` with `|I2| = |I1|`. There is no alternative-domain option.
+This does **not** require `B1` and `B2` themselves to be disjoint.
+Empty `I1` is included and has exactly one choice, `I2 = ∅`; every exchanged
+set has size `r`. The helper `exchange_witness` raises `ValueError` when
+`I1` is not a subset of `B1 - B2`.
 
 ## Verified results
 
 For the supplied example, all 3,136 indexed strong GP relations pass:
 560 with 2 terms, 1,680 with 3, 840 with 4, and 56 with 5.
-With `disjoint_only=True`, each property is checked on 22,470 ordered triples;
+Each property is checked on 22,470 ordered triples;
 there are four violations of ME1 and four of ME2, all of exchange size 2.
 The specific witnesses give `49 not in [0, 46]` and `9 not in [12, 86]`.
 

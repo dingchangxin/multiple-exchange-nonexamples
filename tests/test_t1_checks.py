@@ -30,7 +30,7 @@ def paper_chi(B):
     return 3
 
 
-def independent_me_counts(E, r, values, which, restricted):
+def independent_me_counts(E, r, values, which):
     """Independent ordered-tuple implementation, not using checker helpers."""
     applicable = failures = checked = 0
     bases = list(combinations(E, r))
@@ -39,17 +39,17 @@ def independent_me_counts(E, r, values, which, restricted):
             target = values[frozenset(B1)] * values[frozenset(B2)]
             for bits in product((0, 1), repeat=r):
                 I1 = tuple(B1[i] for i in range(r) if bits[i])
-                if restricted and set(I1) & set(B2):
+                if set(I1) & set(B2):
                     continue
                 terms = []
                 for I2 in combinations([x for x in B2 if x not in B1], len(I1)):
                     left = tuple(x for x in B1 if x not in I1) + I2
                     right = tuple(x for x in B2 if x not in I2) + I1
-                    term = 0 if len(set(right)) != r else (
-                        values[frozenset(left)] * values[frozenset(right)])
+                    assert len(set(left)) == len(set(right)) == r
+                    term = values[frozenset(left)] * values[frozenset(right)]
                     terms.append(term)
                 checked += 1
-                m = max(terms, default=0)
+                m = max(terms)
                 if (target >= m) == (which == 1):
                     applicable += 1
                     polygon = [target] + terms
@@ -97,7 +97,7 @@ class TestT1(unittest.TestCase):
         good = {frozenset(B): int(4 not in B) for B in combinations(range(1, 5), 2)}
         self.assertTrue(check_strong_t1(range(1, 5), 2, good)['is_strong'])
         for f in (check_ME1, check_ME2):
-            self.assertTrue(f(range(1, 5), 2, good, disjoint_only=True)['holds'])
+            self.assertTrue(f(range(1, 5), 2, good)['holds'])
         bad = lambda B: int(B in (frozenset({1, 2}), frozenset({3, 4})))
         self.assertFalse(check_strong_t1(range(1, 5), 2, bad)['is_strong'])
 
@@ -132,37 +132,64 @@ class TestT1(unittest.TestCase):
         self.assertTrue(w2['violates_ME2'])
 
     def test_paper_exhaustive_counts(self):
-        expected = {(False,1):(78400,71408,55934), (False,2):(78400,6992,4),
-                    (True,1):(22470,15478,4), (True,2):(22470,6992,4)}
-        for (restricted, which), counts in expected.items():
+        expected = {1: (22470, 15478, 4), 2: (22470, 6992, 4)}
+        for which, counts in expected.items():
             f = check_ME1 if which == 1 else check_ME2
-            result = f(E8, 4, paper_chi, disjoint_only=restricted)
+            result = f(E8, 4, paper_chi)
             self.assertEqual(tuple(result[k] for k in
                 ('triples_checked','hypothesis_satisfied','violations')), counts)
             self.assertFalse(result['holds'])
+            self.assertEqual(result['violations_by_exchange_size'], {2: 4})
+            w = result['first_failure']
+            self.assertTrue(set(w['I1']) <= set(w['B1']) - set(w['B2']))
 
-    def test_literal_domain_and_equality(self):
+    def test_exchange_domain_and_equality(self):
         one = lambda B: 1
-        literal = check_ME1([1, 2, 3], 2, one)
-        self.assertFalse(literal['holds'])
-        self.assertEqual(literal['first_failure']['products'], ())
-        self.assertTrue(check_ME1([1, 2, 3], 2, one, disjoint_only=True)['holds'])
+        for f in (check_ME1, check_ME2):
+            result = f([1, 2, 3], 2, one)
+            self.assertTrue(result['holds'])
+            self.assertEqual(result['triples_checked'], 15)
+        self.assertEqual(check_ME1([1, 2, 3], 2, one)['hypothesis_satisfied'], 15)
+        self.assertEqual(check_ME2([1, 2, 3], 2, one)['hypothesis_satisfied'], 0)
         w = exchange_witness([1, 2], 1, one, [1], [2], [1])
         self.assertTrue(w['ME1_hypothesis'])
         self.assertFalse(w['ME2_hypothesis'])
         self.assertTrue(w['membership'])
+
+    def test_witness_rejects_forbidden_exchange_elements(self):
+        for B1, B2, I1 in (([1, 2], [2, 3], [2]),
+                           ([1, 2], [2, 3], [1, 2]),
+                           ([1, 2], [1, 2], [1])):
+            with self.assertRaisesRegex(ValueError, 'subset of B1 - B2'):
+                exchange_witness([1, 2, 3], 2, lambda B: 1, B1, B2, I1)
+
+    def test_overlapping_bases_and_empty_exchange(self):
+        w = exchange_witness([1, 2, 3], 2, lambda B: 1, [1, 2], [2, 3], [1])
+        self.assertEqual(len(w['rows']), 1)
+        self.assertEqual(w['rows'][0]['I2'], (3,))
+        self.assertEqual(w['rows'][0]['left'], (2, 3))
+        self.assertEqual(w['rows'][0]['right'], (1, 2))
+        self.assertTrue(w['membership'])
+        for E, r, B in (([], 0, []), ([1, 2], 0, []), ([1, 2], 2, [1, 2])):
+            for f in (check_ME1, check_ME2):
+                result = f(E, r, lambda S: 1)
+                self.assertTrue(result['holds'])
+                self.assertEqual(result['triples_checked'], 1)
+            w = exchange_witness(E, r, lambda S: 1, B, B, [])
+            self.assertEqual(w['products'], (1,))
+            self.assertEqual(w['rows'][0]['I2'], ())
+            self.assertTrue(w['membership'])
 
     def test_independent_random_crosscheck(self):
         rng = random.Random(20261110)
         E = tuple(range(4))
         for _ in range(20):
             values = {frozenset(B): rng.randrange(5) for B in combinations(E, 2)}
-            for restricted in (False, True):
-                for which, f in ((1, check_ME1), (2, check_ME2)):
-                    result = f(E, 2, values, disjoint_only=restricted)
-                    expected = independent_me_counts(E, 2, values, which, restricted)
-                    self.assertEqual(tuple(result[k] for k in
-                        ('triples_checked','hypothesis_satisfied','violations')), expected)
+            for which, f in ((1, check_ME1), (2, check_ME2)):
+                result = f(E, 2, values)
+                expected = independent_me_counts(E, 2, values, which)
+                self.assertEqual(tuple(result[k] for k in
+                    ('triples_checked','hypothesis_satisfied','violations')), expected)
             # Cross-check ALL ordered tuples, including repeated indices.
             def value(t):
                 return values[frozenset(t)] if len(set(t)) == 2 else 0
@@ -176,7 +203,7 @@ class TestT1(unittest.TestCase):
     def test_rational_scaling_and_labels(self):
         scaled = lambda B: Fraction(paper_chi(B), 3)
         self.assertTrue(check_strong_t1(E8, 4, scaled)['is_strong'])
-        self.assertEqual(check_ME2(E8, 4, scaled, disjoint_only=True)['violations'], 4)
+        self.assertEqual(check_ME2(E8, 4, scaled)['violations'], 4)
         self.assertTrue(check_strong_t1(['a', ('b', 2)], 1, lambda B: '1/7')['is_strong'])
 
     def test_notebooks_execute(self):

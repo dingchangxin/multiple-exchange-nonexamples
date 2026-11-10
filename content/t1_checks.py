@@ -9,10 +9,9 @@ Zero coordinates are allowed. Missing mapping entries are errors, not zeros.
 All r-subsets are checked, including nonbases. Each function snapshots chi
 once, so the supplied callable should be deterministic.
 
-ME functions default to the paper's I1 subset B1, with repeated-element
-coordinates interpreted as zero, max(empty)=0 and empty hypersum={0}.
-Use disjoint_only=True to impose I1 subset B1 - B2 instead. Without this
-restriction ME1 fails trivially whenever rank>0 and chi is nonzero.
+ME functions always require I1 subset B1 - B2 and enumerate I2 subset
+B2 - B1 of the same size. The bases B1 and B2 need not be disjoint.
+Empty I1 is allowed; its exchange family contains the single choice I2=empty.
 
 Reference for strong GP axioms: Baker--Bowler, Matroids over hyperfields,
 arXiv:1601.01204v5, Definition 3.11 and Theorem 3.13.
@@ -157,10 +156,9 @@ def _rows(data, B1, B2, I1):
         I2 = frozenset(chosen)
         left = (B1 - I1) | I2
         right = (B2 - I2) | I1
-        # If I1 meets B2, the second alternating tuple has a repetition.
-        # Its set has size < r, so its coordinate is interpreted as zero.
+        # I1 subset B1-B2 and I2 subset B2-B1 preserve both cardinalities.
         a = data.values[left]
-        b = data.values.get(right, 0)
+        b = data.values[right]
         yield I2, left, right, a, b
 
 
@@ -168,7 +166,7 @@ def _witness(data, B1, B2, I1):
     rows = tuple(_rows(data, B1, B2, I1))
     products = tuple(a * b for _, _, _, a, b in rows)
     target = data.values[B1] * data.values[B2]
-    largest = max(products, default=0)
+    largest = max(products)
     lo, hi = _interval(products)
     holds = lo <= target <= hi
     return {"B1": data.ordered(B1), "B2": data.ordered(B2),
@@ -186,18 +184,20 @@ def _witness(data, B1, B2, I1):
 
 
 def exchange_witness(E, r, chi, B1, B2, I1):
-    """Evaluate one specified exchange and return its full table and verdicts."""
+    """Evaluate one exchange with I1 subset B1-B2; return its table and verdicts.
+
+    B1 and B2 must be r-subsets of E. Reject I1 outside B1-B2, including
+    elements of B1 intersection B2. Empty I1 is allowed.
+    """
     data = _Data(E, r, chi)
     B1, B2 = data.subset(B1, r), data.subset(B2, r)
     I1 = data.subset(I1)
-    if not I1 <= B1:
-        raise ValueError("I1 must be a subset of B1.")
+    if not I1 <= B1 - B2:
+        raise ValueError("I1 must be a subset of B1 - B2.")
     return _witness(data, B1, B2, I1)
 
 
-def _check_me(E, r, chi, which, disjoint_only):
-    if not isinstance(disjoint_only, bool):
-        raise TypeError("disjoint_only must be True or False.")
+def _check_me(E, r, chi, which):
     data = _Data(E, r, chi)
     checked = applicable = failures = 0
     first = None
@@ -205,12 +205,12 @@ def _check_me(E, r, chi, which, disjoint_only):
     for B1 in data.subsets:
         for B2 in data.subsets:
             target = data.values[B1] * data.values[B2]
-            pool = data.ordered(B1 - B2 if disjoint_only else B1)
+            pool = data.ordered(B1 - B2)
             for k in range(len(pool) + 1):
                 for chosen in combinations(pool, k):
                     I1 = frozenset(chosen)
                     products = tuple(a * b for _, _, _, a, b in _rows(data, B1, B2, I1))
-                    largest = max(products, default=0)
+                    largest = max(products)
                     checked += 1
                     hypothesis = (target >= largest if which == 1 else target < largest)
                     if not hypothesis:
@@ -223,27 +223,29 @@ def _check_me(E, r, chi, which, disjoint_only):
                         if first is None:
                             first = _witness(data, B1, B2, I1)
     return {"property": "ME%s" % which, "holds": failures == 0, "exact": True,
-            "disjoint_only": disjoint_only, "triples_checked": checked,
+            "triples_checked": checked,
             "hypothesis_satisfied": applicable, "violations": failures,
             "violations_by_exchange_size": dict(sorted(by_size.items())),
             "first_failure": first}
 
 
-def check_ME1(E, r, chi, *, disjoint_only=False):
+def check_ME1(E, r, chi):
     """Exhaustively check ME1: target >= max(products) implies membership.
 
-    Default: I1 subset B1, as written in the paper, with the zero-extension
-    conventions documented above. disjoint_only=True restricts I1 to B1-B2.
+    Always enumerate I1 subset B1-B2 and I2 subset B2-B1 with |I2|=|I1|.
+    B1 and B2 range over all r-subsets, including nonbases and overlapping
+    subsets. Empty I1 is included. Every exchanged coordinate has size r.
     Returns a report; read report['holds'], NOT bool(report).
     The strong GP axioms are a separate check: call check_strong_t1 first.
     """
-    return _check_me(E, r, chi, 1, disjoint_only)
+    return _check_me(E, r, chi, 1)
 
 
-def check_ME2(E, r, chi, *, disjoint_only=False):
+def check_ME2(E, r, chi):
     """Exhaustively check ME2: target < max(products) implies membership.
 
-    Same input conventions and report fields as check_ME1. All triples are
-    checked (including empty I1); enumeration does not stop at a first failure.
+    Always require I1 subset B1-B2, with the same conventions as check_ME1.
+    All allowed triples are checked (including empty I1); enumeration does
+    not stop at a first failure.
     """
-    return _check_me(E, r, chi, 2, disjoint_only)
+    return _check_me(E, r, chi, 2)

@@ -40,6 +40,12 @@ The checkers enumerate all relevant subsets, not random samples. They return
 report dictionaries containing verdicts, counts and a first failure when one
 exists. Read `result['holds']`, not `bool(result)`.
 
+The strong checker skips the automatic relations with `J ⊆ I`: their two
+products are identical, including when zero. All other strong GP relations
+are explicitly evaluated. The report separates `relations_total`,
+`relations_skipped_trivial`, and `relations_checked`; `by_terms` contains only
+evaluated relations, not a two-term row.
+
 Coordinates may be integers, `fractions.Fraction`, `decimal.Decimal`, or rational
 strings such as `'1/3'`. Floating-point and symbolic irrational coordinates are
 not supported. Zero coordinates are allowed; complete mappings must explicitly
@@ -56,8 +62,12 @@ set has size `r`. The helper `exchange_witness` raises `ValueError` when
 
 ## Verified results
 
-For the supplied example, all 3,136 indexed strong GP relations pass:
-560 with 2 terms, 1,680 with 3, 840 with 4, and 56 with 5.
+The first three cases defining the example are mutually exclusive; their
+order does not matter, with the final case remaining the default.
+
+For the supplied example, all 3,136 indexed strong GP relations are satisfied:
+560 automatic two-term relations are skipped, and the remaining 2,576 are
+explicitly checked (1,680 with 3 terms, 840 with 4, and 56 with 5).
 Each property is checked on 22,470 ordered triples;
 there are four violations of ME1 and four of ME2, all of exchange size 2.
 The specific witnesses give `49 not in [0, 46]` and `9 not in [12, 86]`.

@@ -110,16 +110,22 @@ def check_strong_t1(E, r, chi):
     t_e = chi(I-{e}) * chi(J+{e}) for e in I-J.
     The relation holds iff 2*max(t_e) <= sum(t_e).
     Terms with e in J are zero by alternation, not extra conditions.
-    No three-term-only shortcut is used; equality is allowed.
+    When J is a subset of I, I-J={a,b} and both products equal
+    chi(J+{a}) * chi(J+{b}). These automatic relations are skipped before
+    any products are computed. All other relations are checked, not just
+    three-term relations; equality is allowed.
     Rank zero and full rank have no GP relations to enumerate.
 
-    report['is_strong'] is the verdict. report['by_terms'] groups checks
-    by |I-J| (formal terms after repeated-element zeros are omitted).
+    report['is_strong'] is the verdict. report['relations_checked'] counts
+    only explicitly evaluated relations; report['relations_skipped_trivial']
+    counts automatic J subset I relations. Their sum is relations_total.
+    report['by_terms'] groups evaluated relations by |I-J| (formal terms
+    after repeated-element zeros are omitted), so it has no two-term entry.
     Additional zero terms from nonbases remain in that formal count.
     """
     data = _Data(E, r, chi)
     nonzero = any(data.values.values())
-    checked = failures = 0
+    checked = failures = skipped = 0
     first = None
     stats = {}
     if 0 < r < len(data.E):
@@ -127,6 +133,11 @@ def check_strong_t1(E, r, chi):
         small = tuple(frozenset(J) for J in combinations(data.E, r - 1))
         for I in large:
             for J in small:
+                # I-J has two elements; the two products are identical.
+                # This holds even when either coordinate is zero.
+                if J <= I:
+                    skipped += 1
+                    continue
                 active = data.ordered(I - J)
                 terms = tuple(data.values[I - {e}] * data.values[J | {e}]
                               for e in active)
@@ -147,7 +158,8 @@ def check_strong_t1(E, r, chi):
     return {"is_strong": nonzero and failures == 0, "nonzero": nonzero,
             "exact": True, "coordinates": len(data.subsets),
             "support_size": sum(x != 0 for x in data.values.values()),
-            "relations_checked": checked, "violations": failures,
+            "relations_checked": checked, "relations_skipped_trivial": skipped,
+            "relations_total": checked + skipped, "violations": failures,
             "by_terms": dict(sorted(stats.items())), "first_failure": first}
 
 

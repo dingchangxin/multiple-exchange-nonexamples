@@ -9,6 +9,7 @@ import unittest
 from decimal import Decimal
 from fractions import Fraction
 from itertools import combinations, product
+from math import comb
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'content'))
@@ -117,9 +118,76 @@ class TestT1(unittest.TestCase):
     def test_paper_strong(self):
         result = check_strong_t1(E8, 4, paper_chi)
         self.assertTrue(result['is_strong'])
-        self.assertEqual(result['relations_checked'], 3136)
+        self.assertEqual(result['relations_checked'], 2576)
+        self.assertEqual(result['relations_skipped_trivial'], 560)
+        self.assertEqual(result['relations_total'], 3136)
         self.assertEqual({k: v['checked'] for k, v in result['by_terms'].items()},
-                         {2: 560, 3: 1680, 4: 840, 5: 56})
+                         {3: 1680, 4: 840, 5: 56})
+
+    def test_paper_cases_mutually_exclusive(self):
+        ground = frozenset(E8)
+        for B in map(frozenset, combinations(E8, 4)):
+            cases = (B in (L, ground - L), B in (H, ground - H),
+                     len(B & L) == 2 and len(B & H) in (1, 3))
+            self.assertLessEqual(sum(cases), 1)
+            matching = [v for applies, v in zip(cases, (1, 7, 4)) if applies]
+            self.assertEqual(paper_chi(B), matching[0] if matching else 3)
+
+    def test_all_automatic_gp_relations(self):
+        # Rank 1 and corank 1: every indexed relation has J subset I.
+        # Include zero coordinates and reject the all-zero function.
+        for n, r in ((4, 1), (4, 3), (2, 1)):
+            E = tuple(range(n))
+            special = frozenset(E[:r])
+            for nonzero in (False, True):
+                values = {frozenset(B): int(nonzero and frozenset(B) == special)
+                          for B in combinations(E, r)}
+                result = check_strong_t1(E, r, values)
+                self.assertEqual(result['is_strong'], nonzero)
+                self.assertEqual(result['relations_checked'], 0)
+                self.assertEqual(result['relations_skipped_trivial'],
+                                 comb(n, r + 1) * comb(n, r - 1))
+                self.assertEqual(result['relations_total'],
+                                 result['relations_skipped_trivial'])
+                self.assertEqual(result['by_terms'], {})
+                self.assertEqual(result['violations'], 0)
+        for E, r in (([], 0), ([1, 2], 0), ([1, 2], 2)):
+            result = check_strong_t1(E, r, lambda B: 1)
+            self.assertEqual(result['relations_total'], 0)
+            self.assertEqual(result['relations_skipped_trivial'], 0)
+
+    def test_skip_matches_unoptimized_gp_reference(self):
+        # Independently evaluate EVERY pair, including the skipped identities.
+        rng = random.Random(20261111)
+        for n, r in ((4, 2), (5, 2), (5, 3), (6, 3)):
+            E = tuple(range(n))
+            for _ in range(10):
+                values = {frozenset(B): Fraction(rng.randrange(8), 3)
+                          for B in combinations(E, r)}
+                stats = {}
+                for I in map(frozenset, combinations(E, r + 1)):
+                    for J in map(frozenset, combinations(E, r - 1)):
+                        terms = [values[I - {e}] * values[J | {e}] for e in I - J]
+                        slack = sum(terms) - 2 * max(terms)
+                        k = len(terms)
+                        entry = stats.setdefault(k, {'checked': 0, 'failures': 0,
+                                                     'minimum_slack': None})
+                        entry['checked'] += 1
+                        entry['failures'] += int(slack < 0)
+                        if entry['minimum_slack'] is None or slack < entry['minimum_slack']:
+                            entry['minimum_slack'] = slack
+                        if J <= I:
+                            self.assertEqual(terms[0], terms[1])
+                            self.assertEqual(slack, 0)
+                result = check_strong_t1(E, r, values)
+                failures = sum(v['failures'] for v in stats.values())
+                self.assertEqual(result['is_strong'], any(values.values()) and failures == 0)
+                self.assertEqual(result['violations'], failures)
+                self.assertEqual(result['relations_total'], comb(n, r + 1) * comb(n, r - 1))
+                self.assertEqual(result['relations_skipped_trivial'], stats[2]['checked'])
+                self.assertEqual(result['by_terms'], {k: v for k, v in stats.items() if k != 2})
+                self.assertEqual(result['relations_checked'],
+                                 result['relations_total'] - result['relations_skipped_trivial'])
 
     def test_paper_witnesses(self):
         w1 = exchange_witness(E8, 4, paper_chi, H, frozenset(E8)-H, {5, 6})

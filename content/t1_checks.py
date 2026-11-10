@@ -1,4 +1,4 @@
-"""Exact exhaustive checks for strong T1-matroids and ME1 / ME2.
+"""Exact exhaustive checks for strong T1-matroids and ME1 / ME2 / ME3.
 
 T1 is the triangular hyperfield: a (+) b = [abs(a-b), a+b].
 Only the Python standard library is used. Integers, Fraction, Decimal and
@@ -22,8 +22,9 @@ from decimal import Decimal
 from fractions import Fraction
 from itertools import combinations
 from numbers import Rational
+from math import comb, lcm
 
-__all__ = ["check_strong_t1", "check_ME1", "check_ME2",
+__all__ = ["check_strong_t1", "check_ME1", "check_ME2", "check_ME3",
            "exchange_witness", "t1_hypersum_interval", "t1_contains"]
 
 
@@ -103,7 +104,7 @@ class _Data:
         return S
 
 
-def check_strong_t1(E, r, chi):
+def check_strong_t1(E, r, chi, *, arithmetic="fraction"):
     """Check nonzeroness and ALL strong GP relations; return a report dict.
 
     For each I of size r+1 and J of size r-1, set
@@ -122,9 +123,24 @@ def check_strong_t1(E, r, chi):
     report['by_terms'] groups evaluated relations by |I-J| (formal terms
     after repeated-element zeros are omitted), so it has no two-term entry.
     Additional zero terms from nonbases remain in that formal count.
+
+    arithmetic="fraction" (default) uses the original exact coordinates.
+    arithmetic="integer" clears their denominators by a common positive
+    integer D. Each product and slack is multiplied by D**2, so the verdict
+    is unchanged. Returned products and slacks are converted back to the
+    original scale. No floating-point arithmetic or tolerance is used.
     """
+    if arithmetic not in ("fraction", "integer"):
+        raise ValueError("arithmetic must be 'fraction' or 'integer'.")
     data = _Data(E, r, chi)
-    nonzero = any(data.values.values())
+    values = data.values
+    scale = 1
+    if arithmetic == "integer":
+        for value in values.values():
+            scale = lcm(scale, value.denominator)
+        values = {B: value.numerator * (scale // value.denominator)
+                  for B, value in values.items()}
+    nonzero = any(values.values())
     checked = failures = skipped = 0
     first = None
     stats = {}
@@ -139,7 +155,7 @@ def check_strong_t1(E, r, chi):
                     skipped += 1
                     continue
                 active = data.ordered(I - J)
-                terms = tuple(data.values[I - {e}] * data.values[J | {e}]
+                terms = tuple(values[I - {e}] * values[J | {e}]
                               for e in active)
                 slack = sum(terms) - 2 * max(terms, default=0)
                 k = len(terms)
@@ -155,6 +171,14 @@ def check_strong_t1(E, r, chi):
                     if first is None:
                         first = {"I": data.ordered(I), "J": data.ordered(J),
                                  "elements": active, "terms": terms, "slack": slack}
+    # Restore original units in the report, including failure diagnostics.
+    if scale != 1:
+        square = scale * scale
+        for entry in stats.values():
+            entry["minimum_slack"] = Fraction(entry["minimum_slack"], square)
+        if first is not None:
+            first["terms"] = tuple(Fraction(t, square) for t in first["terms"])
+            first["slack"] = Fraction(first["slack"], square)
     return {"is_strong": nonzero and failures == 0, "nonzero": nonzero,
             "exact": True, "coordinates": len(data.subsets),
             "support_size": sum(x != 0 for x in data.values.values()),
@@ -187,8 +211,10 @@ def _witness(data, B1, B2, I1):
             "hypersum_interval": (lo, hi), "membership": holds,
             "ME1_hypothesis": target >= largest,
             "ME2_hypothesis": target < largest,
+            "ME3_hypothesis": target == 0,
             "violates_ME1": target >= largest and not holds,
             "violates_ME2": target < largest and not holds,
+            "violates_ME3": target == 0 and not holds,
             "rows": tuple({"I2": data.ordered(I2), "left": data.ordered(left),
                            "right": data.ordered(right), "left_value": a,
                            "right_value": b, "product": a * b}
@@ -261,3 +287,51 @@ def check_ME2(E, r, chi):
     not stop at a first failure.
     """
     return _check_me(E, r, chi, 2)
+
+
+def check_ME3(E, r, chi):
+    """Check ME3: target == 0 implies membership in the exchange hypersum.
+
+    Always use I1 subset B1-B2, including empty I1. Every allowed triple
+    satisfying the hypothesis is checked; do not stop at the first failure.
+    Pairs with two nonzero coordinates are omitted before forming products.
+    They cannot violate this implication. The report distinguishes:
+      triples_total: all allowed (B1, B2, I1), including vacuous cases;
+      triples_checked: cases with chi(B1)*chi(B2) == 0;
+      triples_skipped_nonzero: cases with a nonzero target.
+    A nonzero function with no zero coordinates satisfies ME3 vacuously.
+    Matroid validity remains a separate check: call check_strong_t1 first.
+    """
+    data = _Data(E, r, chi)
+    zeros = tuple(B for B in data.subsets if data.values[B] == 0)
+    n = len(data.E)
+    total = len(data.subsets) * sum(
+        comb(r, d) * comb(n - r, d) * (1 << d)
+        for d in range(min(r, n - r) + 1))
+    checked = failures = pairs = 0
+    first = None
+    by_size = Counter()
+    for B1 in data.subsets:
+        # This enumerates every ordered pair with at least one zero once.
+        candidates = data.subsets if data.values[B1] == 0 else zeros
+        for B2 in candidates:
+            pairs += 1
+            pool = data.ordered(B1 - B2)
+            for k in range(len(pool) + 1):
+                for chosen in combinations(pool, k):
+                    I1 = frozenset(chosen)
+                    products = tuple(a * b for _, _, _, a, b
+                                     in _rows(data, B1, B2, I1))
+                    checked += 1
+                    if sum(products) < 2 * max(products):
+                        failures += 1
+                        by_size[k] += 1
+                        if first is None:
+                            first = _witness(data, B1, B2, I1)
+    return {"property": "ME3", "holds": failures == 0, "exact": True,
+            "triples_total": total, "triples_checked": checked,
+            "triples_skipped_nonzero": total - checked,
+            "pairs_with_zero_target": pairs, "hypothesis_satisfied": checked,
+            "violations": failures,
+            "violations_by_exchange_size": dict(sorted(by_size.items())),
+            "first_failure": first}
